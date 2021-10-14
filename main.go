@@ -47,24 +47,29 @@ func resolver(addr string, duration time.Duration, stopCh chan bool){
   t.Stop()
 }
 
-func runner(stopCh chan struct{}, wg *sync.WaitGroup, url string, duration time.Duration){
+func runner(runId int64, stopCh chan struct{}, wg *sync.WaitGroup, url string, duration time.Duration){
+  before_duration := time.Duration(rand.Float64() * 1000) * time.Millisecond
+  log.Println(before_duration)
+  time.Sleep(before_duration)
+
   defer func() { wg.Done() }()
   t := time.NewTicker(duration)
   for {
     select {
     case <-t.C:
-      res, err := http.Get(url)
-      defer func() {
-        // HTTP keepalive requires that all HTTP body read in Go
-        io.Copy(ioutil.Discard, res.Body)
-        res.Body.Close()
-      }()
+      t := http.DefaultTransport.(*http.Transport).Clone()
+      t.DisableKeepAlives = true
+      client := &http.Client{Transport: t}
+      res, err := client.Get(url)
       if err != nil {
         log.Println(err)
         return
       }
+      // All HTTP body read
+      io.Copy(ioutil.Discard, res.Body)
+      res.Body.Close()
     case <- stopCh:
-      log.Println("stop request received")
+      log.Printf("[Runner %d] stop request received", runId)
       return
     default:
     }
@@ -74,10 +79,44 @@ func runner(stopCh chan struct{}, wg *sync.WaitGroup, url string, duration time.
 
 
 func main() {
-
   rand.Seed(time.Now().UnixNano())
-  duration:=1
 
+  // Flag parser
+  flag.Parse()
+  purl := flag.Arg(0)
+
+  /// Parse target Rps
+  targetRps, err := strconv.ParseInt(flag.Arg(1), 10, 64)
+  if err != nil {
+    log.Println(err)
+    return
+  }
+
+  /// Parse time to target Rps
+  targetSeconds, err := time.ParseDuration(flag.Arg(2))
+  if err != nil {
+    log.Println(err)
+    return
+  }
+
+  /// Parse time exit after target Rps
+  exitSeconds, err := time.ParseDuration(flag.Arg(3))
+  if err != nil {
+    log.Println(err)
+    return
+  }
+
+
+  duration := targetSeconds / time.Duration(targetRps)
+  log.Printf("duration: %s", duration)
+  u, err := url.Parse(purl)
+  if err != nil {
+    log.Println(err)
+    return
+  }
+
+
+  // Create http.DefaultTransport
   dns = map[string][]string{}
   http.DefaultTransport.(*http.Transport).DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
     hp := strings.Split(addr, ":")
@@ -87,42 +126,40 @@ func main() {
     }
     return dialer.DialContext(ctx, network, addr)
   }
-  http.DefaultTransport.(*http.Transport).MaxIdleConns = 35565
-  http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 35565
-
-  flag.Parse()
-  purl := flag.Arg(0)
-  targetRps, err := strconv.Atoi(flag.Arg(1))
-  if err != nil {
-    log.Println(err)
-    return
-  }
-  u, err := url.Parse(purl)
-  if err != nil {
-    log.Println(err)
-    return
-  }
-
   log.Printf("url: %s\n", purl)
-  log.Printf("targetRps: %\n", targetRps)
+  log.Printf("targetRps: %d\n", targetRps)
+  log.Printf("targetSeconds: %s\n", targetSeconds)
+  log.Printf("exitSeconds: %s\n", exitSeconds)
+  log.Printf("duration: %s\n", duration)
+
 
   // Start Resolver
   res_stop := make(chan bool)
   go resolver(u.Host, 5 * time.Second, res_stop)
 
-  // Start requester
+  // Start runner
   stopCh := make(chan struct{})
   wg := sync.WaitGroup{}
-  for i := 0 ; i< targetRps; i++ {
-    log.Printf("%d request/s\n", i)
-    wg.Add(1)
-    go runner(stopCh, &wg, purl, 1 * time.Second)
-    time.Sleep(time.Duration(rand.Intn(1000 * duration)) * time.Millisecond)
-  }
+  ticker := time.NewTicker(duration)
+  for i := int64(0); i< targetRps; {
+    select {
+    case <-ticker.C:
+      log.Printf("%d request/s\n", i)
+      wg.Add(1)
 
-  // Stop requester
-  time.Sleep(60 * time.Second)
+      go runner(i, stopCh, &wg, purl, 1 * time.Second)
+      i++
+    }
+  }
+  ticker.Stop()
+
+  // Stop runner
+  time.Sleep(exitSeconds * time.Second)
+
+  /// Send stop signal to all runner
   res_stop <- true
   close(stopCh)
+
+  /// Check that all runners have stopped 
   wg.Wait()
 }
