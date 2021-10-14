@@ -141,7 +141,7 @@ func main() {
   stopCh := make(chan struct{})
   wg := sync.WaitGroup{}
   ticker := time.NewTicker(duration)
-  for i := int64(0); i< targetRps; {
+  for i := int64(1); i< targetRps; {
     select {
     case <-ticker.C:
       log.Printf("%d request/s\n", i)
