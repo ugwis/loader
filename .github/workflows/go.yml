@@ -122,7 +122,7 @@ jobs:
       run: |
         mkdir dist
         cp main.go dist/
-        GOOS=$goos GOARCH=$goarch go build -v --ldflags '-extldflags "-static"' -o dist/shots .
+        GOOS=$goos GOARCH=$goarch go build -v --ldflags '-extldflags "-static"' -o dist/loader .
         zip -j -r release dist
     - name: Download artifact to get url to upload to release
       uses: actions/download-artifact@v1
