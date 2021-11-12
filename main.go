@@ -63,7 +63,7 @@ func runner(runId int64, stopCh chan struct{}, wg *sync.WaitGroup, url string, d
       res, err := client.Get(url)
       if err != nil {
         log.Println(err)
-        return
+	continue
       }
       // All HTTP body read
       io.Copy(ioutil.Discard, res.Body)
